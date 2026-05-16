@@ -1,360 +1,534 @@
-'use client'
+﻿'use client'
 
-import { useState, useRef, useEffect } from 'react'
-import { motion, useInView } from 'framer-motion'
-import apiClient from '@/lib/api-client'
+import { useEffect, useMemo, useState } from 'react'
+import { motion } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { CardWatermark } from '@/components/ui/card-watermark'
 import { Icons } from '@/components/ui/icons'
-import { ActivityChart } from '@/components/ActivityChart'
 import { cn } from '@/lib/utils'
+import {
+  type ApexReviewDetail,
+  type ApexRunSnapshot,
+  type ApexRunStatus,
+  type CampaignBrief,
+  getApexReview,
+  getCampaignRun,
+  listApexReviews,
+  startCampaignRun,
+  submitApexReview,
+} from '@/lib/apex-marketing-api'
 
-// Animation variants
 const containerVariants = {
   hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: {
-      staggerChildren: 0.1,
-      delayChildren: 0.1,
-    },
-  },
+  visible: { opacity: 1, transition: { staggerChildren: 0.05 } },
 }
 
 const itemVariants = {
-  hidden: { opacity: 0, y: 20 },
-  visible: {
-    opacity: 1,
-    y: 0,
-    transition: {
-      duration: 0.5,
-      ease: [0.25, 0.46, 0.45, 0.94],
-    },
-  },
+  hidden: { opacity: 0, y: 14 },
+  visible: { opacity: 1, y: 0 },
 }
 
-// Animated number component
-function AnimatedNumber({
-  value,
-  suffix = '',
-  duration = 1000,
-}: {
-  value: number
-  suffix?: string
-  duration?: number
-}) {
-  const [displayValue, setDisplayValue] = useState(0)
-  const ref = useRef<HTMLSpanElement>(null)
-  const isInView = useInView(ref, { once: true, amount: 0.5 })
-  const hasAnimated = useRef(false)
+const happyBrief: CampaignBrief = {
+  campaign_name: 'Apex AI Employee Launch',
+  product_offer: 'Supervity-powered Marketing AI Employee for campaign execution',
+  audience: 'Growth marketing leads and revenue operations teams at mid-market and enterprise companies',
+  campaign_goal: 'Drive demo signups for AI-powered campaign execution',
+  core_message:
+    'Apex Marketing AI Employee turns campaign briefs into approved, governed, multi-channel execution with human control and measurable ROI.',
+  key_benefits: [
+    'Reduces manual campaign execution time from hours to minutes.',
+    'Enforces approval gates and policy checks before external action.',
+    'Creates channel-ready assets, audit logs, CRM records, and insights reports.',
+  ],
+  tone: 'Confident, enterprise-ready, practical',
+  cta_link: 'https://example.com/demo',
+  target_channels: ['LinkedIn', 'X', 'Blog', 'HubSpot'],
+  success_metric: 'Demo signups',
+}
+
+const brokenBrief: CampaignBrief = {
+  campaign_name: 'Apex Broken Brief Test',
+  product_offer: 'Marketing AI Employee',
+  audience: 'Growth marketing leads',
+  campaign_goal: 'Drive demo signups',
+  core_message: 'Turn one campaign brief into execution across channels.',
+  key_benefits: ['Saves campaign execution time.', 'Creates content drafts.'],
+  tone: 'Confident and practical',
+  cta_link: '',
+  target_channels: ['LinkedIn', 'X', 'Blog', 'HubSpot'],
+  success_metric: 'Demo signups',
+}
+
+const agents = [
+  { name: 'Apex Marketing Orchestrator', role: 'Manager Agent', terms: ['orchestrator', 'apex marketing orchestrator'] },
+  { name: 'Data Processing Agent', role: 'Operator', terms: ['data processing', 'validates brief', 'validation'] },
+  { name: 'Content Execution Agent', role: 'Operator', terms: ['content execution', 'drafted assets', 'content'] },
+  { name: 'Communication Agent', role: 'Operator', terms: ['communication', 'teams', 'approval gate'] },
+  { name: 'Document Management Agent', role: 'Operator', terms: ['document management', 'sharepoint', 'artifact'] },
+  { name: 'CRM Operations Agent', role: 'Operator', terms: ['crm', 'hubspot'] },
+  { name: 'Analytics & Reporting Agent', role: 'Operator', terms: ['analytics', 'insights', 'readiness'] },
+  { name: 'Apex Marketing Web Search Capability', role: 'Core Capability', terms: ['web search', 'source citation', 'trend'] },
+]
+
+const policies = [
+  { name: 'Brief validation', area: 'validation', terms: ['validation'] },
+  { name: 'Required CTA', area: 'required CTA', terms: ['cta'] },
+  { name: 'Minimum benefits', area: 'minimum benefits', terms: ['benefits'] },
+  { name: 'Content generation guardrail', area: 'content generation', terms: ['draft', 'content'] },
+  { name: 'Approval before external action', area: 'approval', terms: ['approval'] },
+  { name: 'External action authorization', area: 'authorization', terms: ['authorized', 'external action'] },
+  { name: 'SharePoint storage policy', area: 'storage', terms: ['sharepoint', 'storage'] },
+  { name: 'CRM safety policy', area: 'CRM safety', terms: ['hubspot', 'crm'] },
+  { name: 'Completion policy', area: 'completion', terms: ['completed'] },
+  { name: 'Reporting and insights policy', area: 'reporting/insights', terms: ['insights', 'readiness'] },
+]
+
+type Preset = 'happy_path' | 'broken_path'
+
+type PanelState = 'pending' | 'running' | 'completed' | 'paused' | 'failed' | 'unavailable'
+
+function splitLines(value: string) {
+  return value
+    .split('\n')
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function splitChannels(value: string) {
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function walk(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value.flatMap(walk)
+  if (value && typeof value === 'object') return Object.values(value).flatMap(walk)
+  return [value]
+}
+
+function textBlob(value: unknown) {
+  return walk(value)
+    .filter((item) => item !== null && item !== undefined)
+    .map(String)
+    .join(' ')
+    .toLowerCase()
+}
+
+function findFirst(value: unknown, keys: string[]): unknown {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findFirst(item, keys)
+      if (found !== undefined && found !== null && found !== '') return found
+    }
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    for (const key of keys) {
+      if (record[key] !== undefined && record[key] !== null && record[key] !== '') return record[key]
+    }
+    for (const item of Object.values(record)) {
+      const found = findFirst(item, keys)
+      if (found !== undefined && found !== null && found !== '') return found
+    }
+  }
+  return undefined
+}
+
+function hasAny(value: unknown, terms: string[]) {
+  const blob = textBlob(value)
+  return terms.some((term) => blob.includes(term.toLowerCase()))
+}
+
+function statusLabel(status: ApexRunStatus | 'submitting') {
+  return status.replace(/_/g, ' ')
+}
+
+function statusClass(status: ApexRunStatus | 'submitting') {
+  if (status === 'completed') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (status === 'failed') return 'border-red-200 bg-red-50 text-red-700'
+  if (status === 'paused_needs_human_input') return 'border-amber-200 bg-amber-50 text-amber-800'
+  if (status === 'approval_pending') return 'border-blue-200 bg-blue-50 text-blue-700'
+  if (status === 'running' || status === 'submitting') return 'border-brand-cornflower/30 bg-brand-cornflower/10 text-brand-navy'
+  return 'border-gray-200 bg-gray-50 text-muted-foreground'
+}
+
+function panelClass(state: PanelState) {
+  if (state === 'completed') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
+  if (state === 'failed') return 'border-red-200 bg-red-50 text-red-700'
+  if (state === 'paused') return 'border-amber-200 bg-amber-50 text-amber-800'
+  if (state === 'running') return 'border-blue-200 bg-blue-50 text-blue-700'
+  if (state === 'unavailable') return 'border-gray-200 bg-gray-50 text-muted-foreground'
+  return 'border-gray-200 bg-white text-muted-foreground'
+}
+
+function inferEvidenceState(snapshot: ApexRunSnapshot | null, terms: string[]): PanelState {
+  if (!snapshot) return 'pending'
+  if (snapshot.status === 'failed') return 'failed'
+  if (hasAny(snapshot, terms)) return 'completed'
+  if (snapshot.status === 'running') return 'running'
+  if (snapshot.status === 'approval_pending' || snapshot.status === 'paused_needs_human_input') return 'paused'
+  return snapshot.status === 'completed' ? 'unavailable' : 'pending'
+}
+
+function JsonBlock({ value }: { value: unknown }) {
+  return (
+    <pre className='max-h-80 overflow-auto rounded-lg bg-slate-950 p-4 font-mono text-xs leading-relaxed text-slate-100'>
+      {JSON.stringify(value ?? { note: 'Unavailable / not returned' }, null, 2)}
+    </pre>
+  )
+}
+
+function TextField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <label className='block space-y-1.5'>
+      <span className='text-xs font-semibold uppercase text-brand-muted'>{label}</span>
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className='w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-brand-navy outline-none transition focus:border-brand-cornflower focus:ring-2 focus:ring-brand-cornflower/20'
+      />
+    </label>
+  )
+}
+
+function TextAreaField({ label, value, onChange, rows = 4 }: { label: string; value: string; onChange: (value: string) => void; rows?: number }) {
+  return (
+    <label className='block space-y-1.5'>
+      <span className='text-xs font-semibold uppercase text-brand-muted'>{label}</span>
+      <textarea
+        rows={rows}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className='w-full resize-y rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-brand-navy outline-none transition focus:border-brand-cornflower focus:ring-2 focus:ring-brand-cornflower/20'
+      />
+    </label>
+  )
+}
+
+export default function HomePage() {
+  const [preset, setPreset] = useState<Preset>('happy_path')
+  const [brief, setBrief] = useState<CampaignBrief>(happyBrief)
+  const [triggeredBy, setTriggeredBy] = useState('Aarushi')
+  const [snapshot, setSnapshot] = useState<ApexRunSnapshot | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [rawOpen, setRawOpen] = useState(false)
+  const [reviewQueue, setReviewQueue] = useState<unknown>(null)
+  const [reviewDetail, setReviewDetail] = useState<ApexReviewDetail | null>(null)
+  const [reviewFormId, setReviewFormId] = useState('')
+  const [reviewAction, setReviewAction] = useState('approve')
+  const [reviewFeedback, setReviewFeedback] = useState('')
+  const [exceptionType, setExceptionType] = useState('N/A')
+
+  const uiStatus: ApexRunStatus | 'submitting' = isSubmitting ? 'submitting' : snapshot?.status ?? 'idle'
+
+  const output = snapshot?.outputs ?? snapshot?.raw
+  const sharePoint = findFirst(output, ['sharePoint', 'sharepoint', 'sharepoint_url', 'sharePointUrl', 'artifactReferences'])
+  const hubSpot = findFirst(output, ['hubSpot', 'hubspot', 'hubspotCompanyId', 'hubspotTaskId', 'crm'])
+  const teams = findFirst(output, ['teams', 'teamsMessage', 'communication'])
+  const insights = findFirst(output, ['insights', 'aiInsights', 'analytics'])
+
+  const timeline = useMemo(() => snapshot?.timeline ?? [], [snapshot])
 
   useEffect(() => {
-    if (!isInView || hasAnimated.current) return
-    hasAnimated.current = true
+    if (!snapshot?.runId) return
+    if (!['running', 'approval_pending'].includes(snapshot.status)) return
 
-    const startTime = performance.now()
-
-    const animate = (currentTime: number) => {
-      const elapsed = currentTime - startTime
-      const progress = Math.min(elapsed / duration, 1)
-      const eased = 1 - Math.pow(2, -10 * progress)
-
-      setDisplayValue(Math.round(eased * value))
-
-      if (progress < 1) {
-        requestAnimationFrame(animate)
-      } else {
-        setDisplayValue(value)
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await getCampaignRun(String(snapshot.runId))
+        setSnapshot(next)
+      } catch {
+        window.clearInterval(timer)
       }
-    }
+    }, 5000)
 
-    requestAnimationFrame(animate)
-  }, [value, duration, isInView])
+    return () => window.clearInterval(timer)
+  }, [snapshot?.runId, snapshot?.status])
 
-  const formatValue = (num: number): string => {
-    if (num >= 1000) {
-      return (num / 1000).toFixed(1) + 'K'
-    }
-    return num.toString()
+  const applyPreset = (nextPreset: Preset) => {
+    setPreset(nextPreset)
+    setBrief(nextPreset === 'happy_path' ? happyBrief : brokenBrief)
+    setSnapshot(null)
+    setError(null)
   }
 
-  return (
-    <span ref={ref}>
-      {formatValue(displayValue)}
-      {suffix}
-    </span>
-  )
-}
+  const updateBrief = (key: keyof CampaignBrief, value: string | string[]) => {
+    setBrief((current) => ({ ...current, [key]: value }))
+  }
 
-// Stats Card Component with Bento styling
-interface StatCardProps {
-  title: string
-  value: number
-  suffix?: string
-  icon: React.ElementType
-  trend?: { value: string; positive: boolean }
-  colorClass: string
-  delay?: number
-}
-
-function StatCard({
-  title,
-  value,
-  suffix = '',
-  icon: Icon,
-  trend,
-  colorClass,
-  delay = 0,
-}: StatCardProps) {
-  return (
-    <motion.div
-      variants={itemVariants}
-      initial='hidden'
-      animate='visible'
-      transition={{ delay }}
-      whileHover={{ y: -4 }}
-    >
-      <Card className='group relative h-full cursor-default overflow-hidden'>
-        {/* Branded watermark texture */}
-        <CardWatermark opacity={3} scale={0.9} />
-        <CardContent className='relative z-10 p-5'>
-          <div className='flex items-start justify-between'>
-            <div className='space-y-2'>
-              {/* Micro label */}
-              <p className='text-micro uppercase text-brand-muted transition-colors duration-200 group-hover:text-brand-cornflower'>
-                {title}
-              </p>
-              {/* Display number */}
-              <p className='font-display text-[2.25rem] font-bold leading-none tracking-tight text-brand-navy'>
-                <AnimatedNumber value={value} suffix={suffix} />
-              </p>
-              {/* Trend */}
-              {trend && (
-                <motion.p
-                  className={cn(
-                    'flex items-center gap-1 text-xs font-medium',
-                    trend.positive ? 'text-emerald-600' : 'text-red-500'
-                  )}
-                  initial={{ opacity: 0, x: -10 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: delay + 0.3 }}
-                >
-                  {trend.positive ? (
-                    <Icons.trendingUp className='h-3 w-3' strokeWidth={2} />
-                  ) : (
-                    <Icons.trendingUp
-                      className='h-3 w-3 rotate-180'
-                      strokeWidth={2}
-                    />
-                  )}
-                  {trend.value}
-                </motion.p>
-              )}
-            </div>
-            {/* Icon */}
-            <motion.div
-              className={cn(
-                'rounded-xl p-2.5 text-white',
-                'shadow-lg',
-                colorClass
-              )}
-              whileHover={{ scale: 1.15, rotate: 5 }}
-              transition={{ type: 'spring', stiffness: 400, damping: 17 }}
-            >
-              <Icon className='h-5 w-5' strokeWidth={1.5} />
-            </motion.div>
-          </div>
-        </CardContent>
-      </Card>
-    </motion.div>
-  )
-}
-
-// Hero Section
-function HeroSection({ userName }: { userName?: string }) {
-  const firstName = userName?.split(' ')[0] || 'there'
-
-  return (
-    <motion.div
-      className='col-span-12 py-2'
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.6, ease: [0.25, 0.46, 0.45, 0.94] }}
-    >
-      <h1 className='text-display-3 font-bold tracking-tight text-brand-navy lg:text-display-2'>
-        Where Intelligence <br className='hidden sm:block' />
-        <span className='text-gradient'>Meets Human.</span>
-      </h1>
-      <p className='mt-4 text-lg font-light text-muted-foreground'>
-        Welcome back, {firstName}. Your AI Command Center is ready.
-      </p>
-    </motion.div>
-  )
-}
-
-// Diagnostics Card
-function DiagnosticsCard() {
-  const [apiResponse, setApiResponse] = useState<string>('')
-  const [adminResponse, setAdminResponse] = useState<string>('')
-  const [isLoading, setIsLoading] = useState(false)
-
-  const callApi = async (
-    endpoint: string,
-    setter: React.Dispatch<React.SetStateAction<string>>
-  ) => {
-    setIsLoading(true)
-    setter('Loading...')
+  const runCampaign = async () => {
+    setIsSubmitting(true)
+    setError(null)
+    setSnapshot(null)
     try {
-      const data = await apiClient(endpoint)
-      setter(JSON.stringify(data, null, 2))
-    } catch (error) {
-      setter(
-        `Error: ${error instanceof Error ? error.message : 'Unknown error'}`
-      )
+      const result = await startCampaignRun({
+        triggered_by: triggeredBy,
+        campaign_brief: brief,
+        test_mode: preset,
+      })
+      setSnapshot(result)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error')
+      setSnapshot({ status: 'failed', errorReason: err instanceof Error ? err.message : 'Unknown error', timeline: [], raw: err })
     } finally {
-      setIsLoading(false)
+      setIsSubmitting(false)
+    }
+  }
+
+  const refreshReviews = async () => {
+    setError(null)
+    try {
+      const response = await listApexReviews()
+      setReviewQueue(response.raw)
+      const firstFormId = findFirst(response.raw, ['formId', 'id'])
+      if (typeof firstFormId === 'string') setReviewFormId(firstFormId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to fetch reviews')
+    }
+  }
+
+  const openReview = async () => {
+    if (!reviewFormId.trim()) return
+    setError(null)
+    try {
+      const detail = await getApexReview(reviewFormId.trim())
+      setReviewDetail(detail)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to fetch review form')
+    }
+  }
+
+  const submitReview = async () => {
+    const formId = reviewDetail?.formId || reviewFormId.trim()
+    if (!formId) return
+
+    const normalizedAction = reviewAction?.toString().trim().toLowerCase()
+    if (normalizedAction !== 'approve' && normalizedAction !== 'reject') {
+      setError('Review action must be approve or reject.')
+      return
+    }
+
+    setError(null)
+    try {
+      await submitApexReview(formId, {
+        status: normalizedAction,
+        primary_action: normalizedAction,
+        feedback: reviewFeedback,
+        exception_type: exceptionType,
+      })
+      await refreshReviews()
+      if (reviewDetail?.runId) {
+        const next = await getCampaignRun(String(reviewDetail.runId))
+        setSnapshot(next)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to submit review')
     }
   }
 
   return (
-    <Card className='relative col-span-12 h-full overflow-hidden'>
-      <CardWatermark opacity={3} scale={1.1} />
-      <CardHeader className='relative z-10'>
-        <CardTitle className='flex items-center gap-2'>
-          <Icons.activity
-            className='h-5 w-5 text-brand-cornflower'
-            strokeWidth={1.5}
-          />
-          System Diagnostics
-        </CardTitle>
-      </CardHeader>
-      <CardContent className='relative z-10 space-y-6'>
-        <div className='space-y-3'>
-          <div className='flex items-center justify-between'>
-            <div>
-              <p className='text-sm font-medium text-foreground'>
-                Standard Authorization
-              </p>
-              <p className='mt-0.5 font-mono text-xs text-muted-foreground'>
-                /api/test
-              </p>
-            </div>
-          </div>
-          <Button
-            onClick={() => callApi('/api/test', setApiResponse)}
-            disabled={isLoading}
-            variant='outline'
-            className='w-full'
-          >
-            {isLoading ? 'Running...' : 'Run Diagnostics'}
-          </Button>
-          {apiResponse && (
-            <div className='rounded-xl border border-border/50 bg-muted/30 p-4'>
-              <pre className='overflow-x-auto font-mono text-xs text-muted-foreground'>
-                <code>{apiResponse}</code>
-              </pre>
-            </div>
-          )}
+    <motion.div className='space-y-6' variants={containerVariants} initial='hidden' animate='visible'>
+      <motion.div variants={itemVariants} className='flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between'>
+        <div>
+          <p className='text-xs font-semibold uppercase text-brand-muted'>Apex Marketing AI Employee</p>
+          <h1 className='mt-1 text-display-3 font-bold text-brand-navy lg:text-display-2'>Marketing Command Center</h1>
+          <p className='mt-2 max-w-3xl text-sm text-muted-foreground'>
+            Trigger the Supervity Auto Orchestrator, watch delegation, handle Workbench exceptions, and inspect returned business outputs.
+          </p>
         </div>
-
-        <div className='h-px bg-border/50' />
-
-        <div className='space-y-3'>
-          <div className='flex items-center justify-between'>
-            <div>
-              <p className='text-sm font-medium text-foreground'>
-                Admin Verification
-              </p>
-              <p className='mt-0.5 font-mono text-xs text-muted-foreground'>
-                /api/admin/dashboard
-              </p>
-            </div>
-          </div>
-          <Button
-            onClick={() => callApi('/api/admin/dashboard', setAdminResponse)}
-            disabled={isLoading}
-            variant='gradient'
-            className='w-full'
-          >
-            {isLoading ? 'Verifying...' : 'Verify Admin Access'}
-            <Icons.arrowRight className='ml-2 h-4 w-4' />
-          </Button>
-          {adminResponse && (
-            <div className='rounded-xl border border-border/50 bg-muted/30 p-4'>
-              <pre className='overflow-x-auto font-mono text-xs text-muted-foreground'>
-                <code>{adminResponse}</code>
-              </pre>
-            </div>
-          )}
+        <div className={cn('inline-flex items-center rounded-full border px-4 py-2 text-sm font-semibold capitalize', statusClass(uiStatus))}>
+          {statusLabel(uiStatus)}
         </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-// Main Dashboard — no auth required, renders directly
-export default function HomePage() {
-  return (
-    <motion.div
-      className='space-y-6'
-      variants={containerVariants}
-      initial='hidden'
-      animate='visible'
-    >
-      {/* Hero Section */}
-      <HeroSection userName='Developer' />
-
-      {/* Stats Grid - Bento style */}
-      <div className='grid grid-cols-2 gap-4 lg:grid-cols-4'>
-        <StatCard
-          title='Total Users'
-          value={10400}
-          icon={Icons.users}
-          trend={{ value: '+12%', positive: true }}
-          colorClass='bg-brand-navy'
-          delay={0.1}
-        />
-        <StatCard
-          title='Active Sessions'
-          value={524}
-          icon={Icons.activity}
-          trend={{ value: '+8%', positive: true }}
-          colorClass='bg-brand-cornflower'
-          delay={0.2}
-        />
-        <StatCard
-          title='Success Rate'
-          value={98}
-          suffix='%'
-          icon={Icons.checkCircle}
-          trend={{ value: '+2%', positive: true }}
-          colorClass='bg-brand-purple'
-          delay={0.3}
-        />
-        <StatCard
-          title='AI Confidence'
-          value={96}
-          suffix='%'
-          icon={Icons.sparkles}
-          trend={{ value: 'Stable', positive: true }}
-          colorClass='bg-gradient-to-br from-brand-navy to-brand-purple'
-          delay={0.4}
-        />
-      </div>
-
-      {/* Activity Chart - Full Width */}
-      <motion.div variants={itemVariants}>
-        <ActivityChart className='col-span-12' />
       </motion.div>
 
-      {/* System Diagnostics */}
-      <motion.div
-        className='grid gap-6 lg:grid-cols-12'
-        variants={itemVariants}
-      >
-        <DiagnosticsCard />
+      {error && (
+        <motion.div variants={itemVariants} className='rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700'>
+          {error}
+        </motion.div>
+      )}
+
+      <motion.div variants={itemVariants} className='grid gap-6 xl:grid-cols-[minmax(360px,0.9fr)_minmax(0,1.25fr)]'>
+        <Card>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-brand-navy'>
+              <Icons.fileText className='h-5 w-5 text-brand-cornflower' /> Campaign Brief
+            </CardTitle>
+          </CardHeader>
+          <CardContent className='space-y-4'>
+            <div className='grid grid-cols-2 gap-2'>
+              <Button variant={preset === 'happy_path' ? 'gradient' : 'outline'} onClick={() => applyPreset('happy_path')}>Happy Path</Button>
+              <Button variant={preset === 'broken_path' ? 'gradient' : 'outline'} onClick={() => applyPreset('broken_path')}>Broken Path</Button>
+            </div>
+            <TextField label='Triggered by' value={triggeredBy} onChange={setTriggeredBy} />
+            <TextField label='Campaign name' value={brief.campaign_name} onChange={(value) => updateBrief('campaign_name', value)} />
+            <TextField label='Product offer' value={brief.product_offer} onChange={(value) => updateBrief('product_offer', value)} />
+            <TextAreaField label='Audience' value={brief.audience} onChange={(value) => updateBrief('audience', value)} rows={3} />
+            <TextField label='Campaign goal' value={brief.campaign_goal} onChange={(value) => updateBrief('campaign_goal', value)} />
+            <TextAreaField label='Core message' value={brief.core_message} onChange={(value) => updateBrief('core_message', value)} rows={4} />
+            <TextAreaField label='Key benefits' value={brief.key_benefits.join('\n')} onChange={(value) => updateBrief('key_benefits', splitLines(value))} rows={4} />
+            <div className='grid gap-4 md:grid-cols-2'>
+              <TextField label='Tone' value={brief.tone} onChange={(value) => updateBrief('tone', value)} />
+              <TextField label='CTA link' value={brief.cta_link} onChange={(value) => updateBrief('cta_link', value)} />
+            </div>
+            <div className='grid gap-4 md:grid-cols-2'>
+              <TextField label='Target channels' value={brief.target_channels.join(', ')} onChange={(value) => updateBrief('target_channels', splitChannels(value))} />
+              <TextField label='Success metric' value={brief.success_metric} onChange={(value) => updateBrief('success_metric', value)} />
+            </div>
+            <Button onClick={runCampaign} disabled={isSubmitting} variant='gradient' className='w-full'>
+              {isSubmitting ? <Icons.loader className='mr-2 h-4 w-4 animate-spin' /> : <Icons.zap className='mr-2 h-4 w-4' />}
+              Start Campaign Run
+            </Button>
+          </CardContent>
+        </Card>
+
+        <div className='space-y-6'>
+          <Card>
+            <CardHeader>
+              <CardTitle className='flex items-center gap-2 text-brand-navy'>
+                <Icons.activity className='h-5 w-5 text-brand-cornflower' /> Workflow Timeline
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className='space-y-3'>
+                {timeline.length === 0 ? (
+                  <div className='rounded-lg border border-dashed border-gray-200 p-6 text-sm text-muted-foreground'>No workflow events returned yet.</div>
+                ) : (
+                  timeline.map((event) => (
+                    <div key={event.id} className='flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white p-3'>
+                      <div>
+                        <p className='text-sm font-semibold text-brand-navy'>{event.label}</p>
+                        <p className='text-xs text-muted-foreground'>Raw event preserved for audit</p>
+                      </div>
+                      <span className='rounded-full border border-gray-200 px-2.5 py-1 text-xs font-semibold capitalize text-brand-muted'>{event.status}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className='flex items-center gap-2 text-brand-navy'>
+                <Icons.network className='h-5 w-5 text-brand-cornflower' /> Agent Delegation
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className='grid gap-3 md:grid-cols-2'>
+                {agents.map((agent) => {
+                  const state = inferEvidenceState(snapshot, agent.terms)
+                  return (
+                    <div key={agent.name} className={cn('rounded-lg border p-3', panelClass(state))}>
+                      <div className='flex items-start justify-between gap-2'>
+                        <div>
+                          <p className='text-sm font-semibold'>{agent.name}</p>
+                          <p className='text-xs opacity-80'>{agent.role}</p>
+                        </div>
+                        <span className='text-xs font-semibold capitalize'>{state.replace(/_/g, ' ')}</span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </motion.div>
+
+      <motion.div variants={itemVariants} className='grid gap-6 xl:grid-cols-3'>
+        <Card className='xl:col-span-2'>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-brand-navy'>
+              <Icons.shield className='h-5 w-5 text-brand-cornflower' /> Dynamic AI Policies
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className='grid gap-3 md:grid-cols-2'>
+              {policies.map((policy) => {
+                const state = inferEvidenceState(snapshot, policy.terms)
+                return (
+                  <div key={policy.name} className={cn('rounded-lg border p-3', panelClass(state))}>
+                    <p className='text-sm font-semibold'>{policy.name}</p>
+                    <p className='text-xs capitalize opacity-80'>{policy.area}</p>
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-brand-navy'>
+              <Icons.workbench className='h-5 w-5 text-brand-cornflower' /> Workbench / Approval
+            </CardTitle>
+          </CardHeader>
+          <CardContent className='space-y-4'>
+            <div className={cn('rounded-lg border p-3 text-sm', panelClass(snapshot?.status === 'approval_pending' ? 'running' : snapshot?.status === 'paused_needs_human_input' ? 'paused' : 'pending'))}>
+              {snapshot?.status === 'approval_pending'
+                ? 'Approval pending in Supervity Human-in-Command.'
+                : snapshot?.status === 'paused_needs_human_input'
+                  ? 'Paused for Workbench human correction.'
+                  : 'No active Workbench item returned yet.'}
+            </div>
+            <div className='flex gap-2'>
+              <Button variant='outline' onClick={refreshReviews} className='flex-1'>Refresh Reviews</Button>
+              <Button variant='outline' onClick={openReview} className='flex-1'>Open Form</Button>
+            </div>
+            <TextField label='Form ID' value={reviewFormId} onChange={setReviewFormId} />
+            <label className='block space-y-1.5'>
+              <span className='text-xs font-semibold uppercase text-brand-muted'>Primary action</span>
+              <select value={reviewAction} onChange={(event) => setReviewAction(event.target.value)} className='w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-brand-navy'>
+                <option value='approve'>approve</option>
+                <option value='reject'>reject</option>
+              </select>
+            </label>
+            <TextField label='Exception type' value={exceptionType} onChange={setExceptionType} />
+            <TextAreaField label='Feedback' value={reviewFeedback} onChange={setReviewFeedback} rows={3} />
+            <Button variant='gradient' onClick={submitReview} className='w-full'>Submit Review</Button>
+            {reviewDetail?.html && <div className='max-h-56 overflow-auto rounded-lg border border-gray-200 p-3 text-xs' dangerouslySetInnerHTML={{ __html: reviewDetail.html }} />}
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      <motion.div variants={itemVariants} className='grid gap-6 xl:grid-cols-2'>
+        <Card>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-brand-navy'>
+              <Icons.checkCircle className='h-5 w-5 text-brand-cornflower' /> Final Result Panel
+            </CardTitle>
+          </CardHeader>
+          <CardContent className='space-y-3'>
+            {[
+              ['Teams notification', teams],
+              ['SharePoint artifacts', sharePoint],
+              ['HubSpot CRM reference', hubSpot],
+              ['AI Insights', insights],
+            ].map(([label, value]) => (
+              <div key={String(label)} className='rounded-lg border border-gray-200 p-3'>
+                <p className='text-xs font-semibold uppercase text-brand-muted'>{String(label)}</p>
+                <p className='mt-1 break-words text-sm text-brand-navy'>{value ? JSON.stringify(value) : 'Unavailable / not returned'}</p>
+              </div>
+            ))}
+            {snapshot?.errorReason && <div className='rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700'>{snapshot.errorReason}</div>}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className='flex items-center justify-between gap-2 text-brand-navy'>
+              <span className='flex items-center gap-2'><Icons.fileText className='h-5 w-5 text-brand-cornflower' /> Raw API Response</span>
+              <Button variant='outline' size='sm' onClick={() => setRawOpen((open) => !open)}>{rawOpen ? 'Hide' : 'Show'}</Button>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className='space-y-3'>
+            {rawOpen ? <JsonBlock value={{ snapshot, reviewQueue, reviewDetail }} /> : <div className='rounded-lg border border-dashed border-gray-200 p-6 text-sm text-muted-foreground'>Raw response drawer is closed.</div>}
+          </CardContent>
+        </Card>
       </motion.div>
     </motion.div>
   )
 }
+

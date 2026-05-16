@@ -37,6 +37,7 @@ from .core.storage import GCSStorage, LocalStorage, StorageBackend
 from .middleware import AuditMiddleware
 from .routers import (
     admin_router,
+    apex_marketing_router,
     audit_router,
     auth_router,
     examples_router,
@@ -67,7 +68,7 @@ log.info(f"API Base Path: '{BASE_PATH}' (empty means root)")
 
 app = FastAPI(
     title="AutoPilot API",
-    description="AI Command Center — Full-stack template with FastAPI, Next.js, and PostgreSQL",
+    description="AI Command Center - Full-stack template with FastAPI, Next.js, and PostgreSQL",
     version="2.0.0",
     docs_url=f"{BASE_PATH}/api/docs",
     redoc_url=f"{BASE_PATH}/api/redoc",
@@ -135,6 +136,9 @@ def get_storage_dependency() -> StorageBackend:
 # =============================================================================
 # INCLUDE ROUTERS
 # =============================================================================
+
+# Apex Marketing AI Employee proxy
+api_router.include_router(apex_marketing_router)
 
 # Health checks (public)
 api_router.include_router(health_router)
@@ -255,3 +259,5 @@ if BASE_PATH:
             "health": f"{BASE_PATH}/api/health",
             "base_path": BASE_PATH,
         }
+
+

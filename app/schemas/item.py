@@ -1,5 +1,5 @@
-# app/schemas/item.py
-from pydantic import BaseModel
+﻿# app/schemas/item.py
+from pydantic import BaseModel, ConfigDict
 
 
 class ItemBase(BaseModel):
@@ -14,5 +14,5 @@ class ItemCreate(ItemBase):
 class Item(ItemBase):
     id: int
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
+

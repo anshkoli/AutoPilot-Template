@@ -6,6 +6,7 @@ Note: File endpoints are defined in main.py to maintain proper path ordering.
 """
 
 from .admin import router as admin_router
+from .apex_marketing import router as apex_marketing_router
 from .audit import router as audit_router
 from .auth import router as auth_router
 from .examples import router as examples_router
@@ -13,6 +14,7 @@ from .health import router as health_router
 from .items import router as items_router
 
 __all__ = [
+    "apex_marketing_router",
     "health_router",
     "auth_router",
     "admin_router",
@@ -20,3 +22,5 @@ __all__ = [
     "items_router",
     "examples_router",
 ]
+
+

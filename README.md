@@ -63,8 +63,7 @@ make up
 
 **Windows (PowerShell):**
 ```powershell
-.\scripts\start.ps1
-```
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned```
 
 > This script clears WSL2 port conflicts, starts Docker, and verifies all services are reachable.
 > You can still use `docker compose up --build -d` directly, but the script handles a common Windows networking issue automatically.

@@ -28,6 +28,7 @@ services:
     volumes:
       - ./app:/app/app
       - ./utils:/app/utils
+      - ./tests:/app/tests
       - ./alembic:/app/alembic
       - ./alembic.ini:/app/alembic.ini
       - document_storage:/app/document_storage

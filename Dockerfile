@@ -15,7 +15,7 @@ ENV PYTHONUNBUFFERED=1
 ENV APP_ENV=production
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y curl && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y curl dos2unix && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Create directories required by the application.
 # `scripts` and `alembic` are for development/migration tasks, but creating them
@@ -30,6 +30,8 @@ COPY alembic ./alembic/
 COPY alembic.ini ./
 COPY scripts ./scripts/
 COPY start_gunicorn.sh ./
+# Ensure shell scripts have LF line endings (fix CRLF issues from Windows)
+RUN dos2unix start_gunicorn.sh || true
 
 RUN chmod -R 755 /app/*/
 # Make scripts executable

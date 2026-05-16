@@ -5,7 +5,7 @@ uvicorn
 gunicorn
 python-jose[cryptography]
 requests
-httpx
+httpx==0.23.3
 python-multipart
 email-validator
 openpyxl  # Excel export for audit logs
