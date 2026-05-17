@@ -1,18 +1,21 @@
-import { getSession } from 'next-auth/react'
+﻿import { getSession } from 'next-auth/react'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || ''
+const ACTIVE_ORG = process.env.NEXT_PUBLIC_ACTIVE_ORG || 'codex'
+const ACTIVE_TEAM = process.env.NEXT_PUBLIC_ACTIVE_TEAM || 'team codex'
 
 /**
  * A robust API client that handles authentication and base path resolution.
  * @param endpoint The API endpoint to call, e.g., '/api/test' or '/api/admin/dashboard'.
  *                 The endpoint should include the '/api' prefix.
- * @param options Standard fetch options (method, body, etc.).
  */
 async function apiClientFetch<T = unknown>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const session = await getSession()
-
   const headers = new Headers(options.headers || {})
+
+  headers.set('x-active-org', ACTIVE_ORG)
+  headers.set('x-active-team', ACTIVE_TEAM)
 
   if (session?.accessToken) {
     headers.set('Authorization', `Bearer ${session.accessToken}`)
@@ -25,7 +28,7 @@ async function apiClientFetch<T = unknown>(endpoint: string, options: RequestIni
 
   // If the backend returns a 401, log it but don't force redirect in dev mode
   if (response.status === 401) {
-    console.warn('[API] 401 Unauthorized — check backend AUTH_BYPASS setting')
+    console.warn('[API] 401 Unauthorized - check backend AUTH_BYPASS setting')
   }
 
   if (!response.ok) {
@@ -109,3 +112,5 @@ export const apiClient = {
 
 // Default export for backward compatibility
 export default apiClientFetch
+
+

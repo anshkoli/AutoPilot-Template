@@ -44,6 +44,12 @@ from .routers import (
     health_router,
     items_router,
 )
+import re
+import httpx
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+from app.routers.apex_marketing import _api_base, _auth_headers
 from .security import get_current_user, verify_access
 
 log = logging.getLogger(__name__)
@@ -227,6 +233,47 @@ async def delete_file(
 # =============================================================================
 
 app.include_router(api_router)
+
+
+@app.exception_handler(ValueError)
+async def handle_value_error(request: Request, exc: ValueError):
+    """
+    Catch specific multipart parsing errors raised by Starlette when the
+    `Content-Type` header is malformed (missing boundary). If this occurs on
+    the Apex Marketing review submit endpoint, proxy the raw request body to
+    the upstream workflow API instead of returning a 500.
+    """
+    msg = str(exc)
+    if "Can't decode form data" not in msg:
+        # Not the multipart boundary error we care about.
+        return JSONResponse(status_code=500, content={"detail": msg})
+
+    # Match path like /{base}/api/apex-marketing/reviews/{form_id}/submit
+    m = re.search(r"/api(?:/[^/]+)?/apex-marketing/reviews/([^/]+)/submit", request.url.path)
+    if not m:
+        return JSONResponse(status_code=500, content={"detail": msg})
+
+    form_id = m.group(1)
+
+    # Read raw body and proxy to Supervity submit path
+    body = await request.body()
+    submit_url = f"{_api_base()}/api/v1/user-forms/{form_id}/submit"
+    headers = _auth_headers()
+    if request.headers.get("content-type"):
+        headers["Content-Type"] = request.headers.get("content-type")
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        proxied = await client.post(submit_url, headers=headers, content=body)
+
+    if proxied.status_code >= 400:
+        return JSONResponse(status_code=proxied.status_code, content={"detail": proxied.text})
+
+    try:
+        data = proxied.json()
+    except Exception:
+        data = {"status_code": proxied.status_code, "text": proxied.text}
+
+    return JSONResponse(status_code=200, content={"submitted": True, "raw": data})
 
 
 # =============================================================================

@@ -5,6 +5,13 @@ import { motion } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Icons } from '@/components/ui/icons'
+import {
+  chartColors,
+  DistributionDonut,
+  HorizontalMetricBars,
+  ReadinessGauge,
+} from '@/components/apex/ApexVisuals'
+import { normalizeApexMarketingResult, formatPanelValue } from '@/lib/apex-marketing-normalizer'
 import { cn } from '@/lib/utils'
 import {
   type ApexReviewDetail,
@@ -221,15 +228,58 @@ export default function HomePage() {
   const [reviewFeedback, setReviewFeedback] = useState('')
   const [exceptionType, setExceptionType] = useState('N/A')
 
-  const uiStatus: ApexRunStatus | 'submitting' = isSubmitting ? 'submitting' : snapshot?.status ?? 'idle'
+  const normalizedResult = useMemo(() => normalizeApexMarketingResult(snapshot), [snapshot])
+  const uiStatus: ApexRunStatus | 'submitting' = isSubmitting ? 'submitting' : normalizedResult.status
 
-  const output = snapshot?.outputs ?? snapshot?.raw
-  const sharePoint = findFirst(output, ['sharePoint', 'sharepoint', 'sharepoint_url', 'sharePointUrl', 'artifactReferences'])
-  const hubSpot = findFirst(output, ['hubSpot', 'hubspot', 'hubspotCompanyId', 'hubspotTaskId', 'crm'])
-  const teams = findFirst(output, ['teams', 'teamsMessage', 'communication'])
-  const insights = findFirst(output, ['insights', 'aiInsights', 'analytics'])
+  const timeline = normalizedResult.timeline
+  const agentStates = agents.map((agent) => inferEvidenceState(snapshot ? { ...snapshot, outputs: normalizedResult.outputRoot } : null, agent.terms))
+  const policyStates = policies.map((policy) => inferEvidenceState(snapshot ? { ...snapshot, outputs: normalizedResult.outputRoot } : null, policy.terms))
+  const returnedDraftCount = [normalizedResult.linkedinDraft, normalizedResult.xDraft, normalizedResult.blogDraft].filter(
+    (draft) => draft !== 'Unavailable / not returned'
+  ).length
+  const returnedConnectorCount = [normalizedResult.teams, normalizedResult.sharepoint, normalizedResult.hubspot].filter(
+    (connector) => connector.status !== 'Unavailable / not returned' && connector.status !== 'Not returned by connector'
+  ).length
+  const readinessValue = normalizedResult.readinessScore === 'Unavailable / not returned'
+    ? null
+    : Number.parseInt(normalizedResult.readinessScore, 10)
+  const agentChartData = [
+    { name: 'Completed', value: agentStates.filter((state) => state === 'completed').length, color: chartColors.emerald },
+    { name: 'Running', value: agentStates.filter((state) => state === 'running').length, color: chartColors.cornflower },
+    { name: 'Paused', value: agentStates.filter((state) => state === 'paused').length, color: chartColors.amber },
+    { name: 'Pending', value: agentStates.filter((state) => state === 'pending' || state === 'unavailable').length, color: chartColors.slate },
+    { name: 'Failed', value: agentStates.filter((state) => state === 'failed').length, color: chartColors.rose },
+  ].filter((item) => item.value > 0)
+  const connectorChartData = [
+    { name: 'Teams', value: normalizedResult.teams.status === 'Unavailable / not returned' ? 0 : 1, fill: normalizedResult.teams.status === 'Not returned by connector' ? chartColors.amber : chartColors.emerald },
+    { name: 'SharePoint', value: normalizedResult.sharepoint.status === 'Unavailable / not returned' ? 0 : 1, fill: normalizedResult.sharepoint.status === 'Not returned by connector' ? chartColors.amber : chartColors.emerald },
+    { name: 'HubSpot', value: normalizedResult.hubspot.status === 'Unavailable / not returned' ? 0 : 1, fill: normalizedResult.hubspot.status === 'Not returned by connector' ? chartColors.amber : chartColors.emerald },
+  ]
+  const policyChartData = [
+    { name: 'Observed', value: policyStates.filter((state) => state === 'completed').length, fill: chartColors.emerald },
+    { name: 'Watching', value: policyStates.filter((state) => state === 'running').length, fill: chartColors.cornflower },
+    { name: 'Paused', value: policyStates.filter((state) => state === 'paused').length, fill: chartColors.amber },
+    { name: 'Pending', value: policyStates.filter((state) => state === 'pending' || state === 'unavailable').length, fill: chartColors.slate },
+    { name: 'Failed', value: policyStates.filter((state) => state === 'failed').length, fill: chartColors.rose },
+  ].filter((item) => item.value > 0)
 
-  const timeline = useMemo(() => snapshot?.timeline ?? [], [snapshot])
+  useEffect(() => {
+    if (snapshot) {
+      window.localStorage.setItem('apexMarketing:lastSnapshot', JSON.stringify(snapshot))
+    }
+  }, [snapshot])
+
+  useEffect(() => {
+    if (reviewQueue) {
+      window.localStorage.setItem('apexMarketing:lastReviewQueue', JSON.stringify(reviewQueue))
+    }
+  }, [reviewQueue])
+
+  useEffect(() => {
+    if (reviewDetail) {
+      window.localStorage.setItem('apexMarketing:lastReviewDetail', JSON.stringify(reviewDetail))
+    }
+  }, [reviewDetail])
 
   useEffect(() => {
     if (!snapshot?.runId) return
@@ -349,6 +399,29 @@ export default function HomePage() {
         </motion.div>
       )}
 
+      <motion.div variants={itemVariants} className='grid gap-4 md:grid-cols-4'>
+        {[
+          { label: 'Timeline events', value: timeline.length, icon: Icons.activity },
+          { label: 'Returned drafts', value: `${returnedDraftCount}/3`, icon: Icons.fileText },
+          { label: 'Connector returns', value: `${returnedConnectorCount}/3`, icon: Icons.network },
+          { label: 'Policy evidence', value: `${policyStates.filter((state) => state === 'completed').length}/10`, icon: Icons.shield },
+        ].map((metric) => (
+          <Card key={metric.label}>
+            <CardContent className='p-4'>
+              <div className='flex items-center gap-3'>
+                <div className='flex h-10 w-10 items-center justify-center rounded-lg bg-brand-cornflower/15 text-brand-navy'>
+                  <metric.icon className='h-5 w-5' />
+                </div>
+                <div>
+                  <p className='text-xs font-semibold uppercase text-brand-muted'>{metric.label}</p>
+                  <p className='mt-1 text-xl font-bold text-brand-navy'>{metric.value}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </motion.div>
+
       <motion.div variants={itemVariants} className='grid gap-6 xl:grid-cols-[minmax(360px,0.9fr)_minmax(0,1.25fr)]'>
         <Card>
           <CardHeader>
@@ -418,7 +491,7 @@ export default function HomePage() {
             <CardContent>
               <div className='grid gap-3 md:grid-cols-2'>
                 {agents.map((agent) => {
-                  const state = inferEvidenceState(snapshot, agent.terms)
+                  const state = inferEvidenceState(snapshot ? { ...snapshot, outputs: normalizedResult.outputRoot } : null, agent.terms)
                   return (
                     <div key={agent.name} className={cn('rounded-lg border p-3', panelClass(state))}>
                       <div className='flex items-start justify-between gap-2'>
@@ -437,6 +510,41 @@ export default function HomePage() {
         </div>
       </motion.div>
 
+      <motion.div variants={itemVariants} className='grid gap-6 xl:grid-cols-[0.8fr_1fr_0.8fr]'>
+        <Card>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-brand-navy'>
+              <Icons.network className='h-5 w-5 text-brand-cornflower' /> Agent State Mix
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <DistributionDonut data={agentChartData.length ? agentChartData : [{ name: 'Pending', value: agents.length, color: chartColors.slate }]} centerLabel='agents' />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-brand-navy'>
+              <Icons.barChart className='h-5 w-5 text-brand-cornflower' /> Returned Evidence
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <HorizontalMetricBars data={connectorChartData} />
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-brand-navy'>
+              <Icons.trendingUp className='h-5 w-5 text-brand-cornflower' /> Readiness
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ReadinessGauge value={Number.isFinite(readinessValue) ? readinessValue : null} label='score / 100' />
+          </CardContent>
+        </Card>
+      </motion.div>
+
       <motion.div variants={itemVariants} className='grid gap-6 xl:grid-cols-3'>
         <Card className='xl:col-span-2'>
           <CardHeader>
@@ -447,7 +555,7 @@ export default function HomePage() {
           <CardContent>
             <div className='grid gap-3 md:grid-cols-2'>
               {policies.map((policy) => {
-                const state = inferEvidenceState(snapshot, policy.terms)
+                const state = inferEvidenceState(snapshot ? { ...snapshot, outputs: normalizedResult.outputRoot } : null, policy.terms)
                 return (
                   <div key={policy.name} className={cn('rounded-lg border p-3', panelClass(state))}>
                     <p className='text-sm font-semibold'>{policy.name}</p>
@@ -455,6 +563,9 @@ export default function HomePage() {
                   </div>
                 )
               })}
+            </div>
+            <div className='mt-5 rounded-lg border border-gray-200 bg-white p-3'>
+              <HorizontalMetricBars data={policyChartData.length ? policyChartData : [{ name: 'Pending', value: policies.length, fill: chartColors.slate }]} />
             </div>
           </CardContent>
         </Card>
@@ -497,22 +608,84 @@ export default function HomePage() {
         <Card>
           <CardHeader>
             <CardTitle className='flex items-center gap-2 text-brand-navy'>
+              <Icons.fileText className='h-5 w-5 text-brand-cornflower' /> Generated Drafts
+            </CardTitle>
+          </CardHeader>
+          <CardContent className='space-y-3'>
+            {[
+              ['LinkedIn draft', normalizedResult.linkedinDraft],
+              ['X draft / summary', normalizedResult.xDraft],
+              ['Blog draft', normalizedResult.blogDraft],
+            ].map(([label, value]) => (
+              <div key={String(label)} className='rounded-lg border border-gray-200 p-3'>
+                <p className='text-xs font-semibold uppercase text-brand-muted'>{String(label)}</p>
+                <p className='mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-brand-navy'>{String(value)}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-brand-navy'>
               <Icons.checkCircle className='h-5 w-5 text-brand-cornflower' /> Final Result Panel
             </CardTitle>
           </CardHeader>
           <CardContent className='space-y-3'>
             {[
-              ['Teams notification', teams],
-              ['SharePoint artifacts', sharePoint],
-              ['HubSpot CRM reference', hubSpot],
-              ['AI Insights', insights],
-            ].map(([label, value]) => (
-              <div key={String(label)} className='rounded-lg border border-gray-200 p-3'>
-                <p className='text-xs font-semibold uppercase text-brand-muted'>{String(label)}</p>
-                <p className='mt-1 break-words text-sm text-brand-navy'>{value ? JSON.stringify(value) : 'Unavailable / not returned'}</p>
+              normalizedResult.teams,
+              normalizedResult.sharepoint,
+              normalizedResult.hubspot,
+            ].map((item) => (
+              <div key={item.label} className='rounded-lg border border-gray-200 p-3'>
+                <div className='flex items-center justify-between gap-3'>
+                  <p className='text-xs font-semibold uppercase text-brand-muted'>{item.label}</p>
+                  <span className='rounded-full border border-gray-200 px-2 py-0.5 text-xs font-semibold text-brand-muted'>{item.status}</span>
+                </div>
+                <p className='mt-2 whitespace-pre-wrap break-words text-sm text-brand-navy'>{formatPanelValue(item.value)}</p>
               </div>
             ))}
+            <div className='grid gap-3 md:grid-cols-2'>
+              <div className='rounded-lg border border-gray-200 p-3'>
+                <p className='text-xs font-semibold uppercase text-brand-muted'>Time Saved</p>
+                <p className='mt-1 text-sm font-semibold text-brand-navy'>{normalizedResult.timeSaved}</p>
+              </div>
+              <div className='rounded-lg border border-gray-200 p-3'>
+                <p className='text-xs font-semibold uppercase text-brand-muted'>Readiness Score</p>
+                <p className='mt-1 text-sm font-semibold text-brand-navy'>{normalizedResult.readinessScore}</p>
+              </div>
+            </div>
+            <div className='rounded-lg border border-gray-200 p-3'>
+              <p className='text-xs font-semibold uppercase text-brand-muted'>AI Insights</p>
+              <p className='mt-1 whitespace-pre-wrap break-words text-sm text-brand-navy'>{formatPanelValue(normalizedResult.aiInsights)}</p>
+            </div>
+            <div className='rounded-lg border border-gray-200 p-3'>
+              <p className='text-xs font-semibold uppercase text-brand-muted'>Approval / Workbench</p>
+              <p className='mt-1 text-sm text-brand-navy'>Approval: {normalizedResult.approvalStatus}</p>
+              <p className='mt-1 text-sm text-brand-navy'>Approval bypass used: {normalizedResult.approvalBypassUsed === null ? 'Unavailable / not returned' : String(normalizedResult.approvalBypassUsed)}</p>
+              <p className='mt-1 text-sm text-brand-navy'>Workbench exception: {formatPanelValue(normalizedResult.workbenchException)}</p>
+            </div>
             {snapshot?.errorReason && <div className='rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700'>{snapshot.errorReason}</div>}
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      <motion.div variants={itemVariants} className='grid gap-6 xl:grid-cols-2'>
+        <Card>
+          <CardHeader>
+            <CardTitle className='flex items-center gap-2 text-brand-navy'>
+              <Icons.activity className='h-5 w-5 text-brand-cornflower' /> Processed Request / Agent Outputs
+            </CardTitle>
+          </CardHeader>
+          <CardContent className='space-y-3'>
+            <div className='rounded-lg border border-gray-200 p-3'>
+              <p className='text-xs font-semibold uppercase text-brand-muted'>Processed request payload</p>
+              <p className='mt-1 whitespace-pre-wrap break-words text-sm text-brand-navy'>{formatPanelValue(normalizedResult.processedRequestPayload)}</p>
+            </div>
+            <div className='rounded-lg border border-gray-200 p-3'>
+              <p className='text-xs font-semibold uppercase text-brand-muted'>Raw agent outputs</p>
+              <p className='mt-1 whitespace-pre-wrap break-words text-sm text-brand-navy'>{formatPanelValue(normalizedResult.rawAgentOutputs)}</p>
+            </div>
           </CardContent>
         </Card>
 
@@ -524,11 +697,13 @@ export default function HomePage() {
             </CardTitle>
           </CardHeader>
           <CardContent className='space-y-3'>
-            {rawOpen ? <JsonBlock value={{ snapshot, reviewQueue, reviewDetail }} /> : <div className='rounded-lg border border-dashed border-gray-200 p-6 text-sm text-muted-foreground'>Raw response drawer is closed.</div>}
+            {rawOpen ? <JsonBlock value={{ normalizedResult, snapshot, reviewQueue, reviewDetail }} /> : <div className='rounded-lg border border-dashed border-gray-200 p-6 text-sm text-muted-foreground'>Raw response drawer is closed.</div>}
           </CardContent>
         </Card>
       </motion.div>
     </motion.div>
   )
 }
+
+
 
